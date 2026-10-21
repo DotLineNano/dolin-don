@@ -1,0 +1,35 @@
+# === Build ===
+target/
+
+# === File sampah ===
+*.bak
+*.prev
+*.img
+*.don
+*.zst
+*.zip
+*.tar.gz
+*.apk
+*.so
+backup/
+tes/
+sample/
+out_*/
+*_out/
+dolin-fresh/
+-o
+
+# === Android ===
+app/build/
+.gradle/
+local.properties
+
+# === IDE ===
+.idea/
+.vscode/
+*.swp
+*~
+
+# === OS ===
+.DS_Store
+Thumbs.db
