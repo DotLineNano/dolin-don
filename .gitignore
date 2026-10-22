@@ -1,0 +1,120 @@
+# === Build ===
+target/
+*.so
+*.rlib
+*.d
+
+# === Test artifacts (jangan commit) ===
+*.img
+*.don
+*.zst
+*.zip
+*.tar.gz
+*.tar
+*.7z
+
+# File nyasar dari bug CLI
+-o
+
+# === Folder test/backup ===
+backup/
+backup_before_rle/
+sample/
+out_*/
+out_t1/
+out_t4/
+out_pgpt/
+out_boot/
+tes/
+
+# === Android ===
+app/build/
+app/.gradle/
+.gradle/
+local.properties
+*.apk
+*.aab
+*.keystore
+*.jks
+
+# === IDE ===
+.idea/
+.vscode/
+*.swp
+*~
+
+# === OS ===
+.DS_Store
+Thumbs.db
+
+# === Tambahan ===
+.-o.partial/
+broken_out/
+restored/
+*_out/
+.*.partial/
+
+# === Folder output test (wildcard) ===
+out_*/
+*_out/
+restored/
+broken_out/
+.-o.partial/
+.*.partial/
+
+# === File backup/prev (jangan commit) ===
+*.bak
+*.prev
+*.cleanup*
+*.fix*
+*.tune*
+*.bench_*
+dolin-fresh/
+
+# === File backup/prev (jangan commit) ===
+*.bak
+*.prev
+*.cleanup*
+*.fix*
+*.tune*
+*.bench_*
+dolin-fresh/
+
+# === Folder test/backup ===
+backup/
+backup_before_rle/
+sample/
+tes/
+out_*/
+*_out/
+restored/
+broken_out/
+.-o.partial/
+
+# === File test ===
+*.img
+*.don
+*.zst
+*.zip
+*.tar.gz
+*.apk
+*.so
+broken.don
+tes.don.zst
+
+# === File nyasar ===
+-o
+
+# Backup files
+*.bak.*
+*.bak
+
+# Test output
+extract_*/
+chunk_*/
+debug_*
+test_*
+*.out
+
+# Build artifacts
+target/
