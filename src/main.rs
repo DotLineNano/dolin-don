@@ -311,6 +311,8 @@ fn method_name(method: u16) -> &'static str {
         2 => "lz",
         3 => "lzv5",
         4 => "lzv5ro",
+        5 => "lzv5huff",
+        6 => "rleext",
         _ => "unknown",
     }
 }

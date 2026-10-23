@@ -106,6 +106,7 @@ pub fn validate_archive(path: &Path) -> Result<()> {
         let decoded = match DonMethod::from_u16(raw.method) {
             Some(DonMethod::Stored) => stored,
             Some(DonMethod::Rle) => don_rle::decompress(&stored, raw.original_size)?,
+            Some(DonMethod::RleExt) => don_rle::decompress_ext(&stored, raw.original_size)?,
             Some(DonMethod::Lz) => don_lz::decompress(&stored, raw.original_size)?,
             Some(DonMethod::LzV5) => don_lz::decompress_lz_v5(&stored, raw.original_size)?,
             Some(DonMethod::LzV5Huff) => don_lz::decompress_lz_v5_huff(&stored, raw.original_size)?,

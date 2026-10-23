@@ -46,6 +46,7 @@ pub fn archive_info(path: &Path) -> Result<ArchiveInfo> {
             DonMethod::Lz => info.lz_count += 1,
             DonMethod::LzV5 => info.lz_count += 1,
             DonMethod::LzV5Huff => info.lz_count += 1,
+            DonMethod::RleExt => info.rle_count += 1,
         }
     }
 

@@ -268,6 +268,15 @@ fn extract_entry_payload_atomic(
         let mut out = File::create(&temp_path)?;
         out.write_all(&decoded)?;
         out.flush()?;
+
+        // Restore mtime dari entry (kalau ada)
+        if entry.mtime_unix > 0 {
+            let mtime = std::time::UNIX_EPOCH
+                + std::time::Duration::from_secs(entry.mtime_unix);
+            let times = std::fs::FileTimes::new().set_modified(mtime);
+            let _ = out.set_times(times);
+        }
+
         drop(out);
 
         Ok(())
@@ -286,6 +295,7 @@ fn decode_entry_payload(entry: &DonEntry, stored: &[u8]) -> Result<Vec<u8>> {
     match entry.method {
         DonMethod::Stored => Ok(stored.to_vec()),
         DonMethod::Rle => don_rle::decompress(stored, entry.original_size),
+        DonMethod::RleExt => don_rle::decompress_ext(stored, entry.original_size),
         DonMethod::Lz => don_lz::decompress(stored, entry.original_size),
         DonMethod::LzV5 => don_lz::decompress_lz_v5(stored, entry.original_size),
         DonMethod::LzV5Huff => don_lz::decompress_lz_v5_huff(stored, entry.original_size),

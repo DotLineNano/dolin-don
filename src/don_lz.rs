@@ -321,6 +321,23 @@ pub fn compress_lz_v5_typed(data: &[u8], file_type: &str) -> Vec<u8> {
 
         out.extend_from_slice(&data[anchor..pos]);
 
+        // Guard: offset mesti <= pos (jarak valid dari posisi semasa)
+        if m1.offset > pos || m1.offset >= WINDOW_SIZE {
+            // Hash collision, stale entry, atau offset > window — skip match
+            if pos + 4 <= data.len() {
+                insert_pos(data, pos, &mut head, &mut prev);
+            }
+            pos += 1;
+            continue;
+        }
+
+        if m1.offset > pos {
+            if pos + 4 <= data.len() {
+                insert_pos(data, pos, &mut head, &mut prev);
+            }
+            pos += 1;
+            continue;
+        }
         let offset = m1.offset as u16;
         out.push((offset & 0xFF) as u8);
         out.push((offset >> 8) as u8);
@@ -973,6 +990,22 @@ pub fn compress_lz_v5_huff(data: &[u8]) -> Vec<u8> {
         // Literal bytes → Huffman stream (bukan tokens)
         literals.extend_from_slice(&data[anchor..pos]);
 
+        // Guard: offset mesti <= pos
+        if m1.offset > pos {
+            if pos + 4 <= data.len() {
+                insert_pos(data, pos, &mut head, &mut prev);
+            }
+            pos += 1;
+            continue;
+        }
+
+        if m1.offset > pos || m1.offset >= WINDOW_SIZE {
+            if pos + 4 <= data.len() {
+                insert_pos(data, pos, &mut head, &mut prev);
+            }
+            pos += 1;
+            continue;
+        }
         // Offset (2 byte)
         let offset = m1.offset as u16;
         tokens.push((offset & 0xFF) as u8);

@@ -155,6 +155,169 @@ fn count_run_capped(input: &[u8], start: usize, cap: usize) -> usize {
     len
 }
 
+
+const EXT_LITERAL_TAG: u8 = 0x7F;
+const EXT_RUN_TAG: u8 = 0xFF;
+const MAX_SHORT_LITERAL_EXT: usize = 127;
+const MAX_SHORT_RUN_EXT: usize = 129;
+const MAX_EXT_LEN: usize = 65535;
+
+pub fn compress_ext(input: &[u8]) -> Vec<u8> {
+    if input.is_empty() {
+        return Vec::new();
+    }
+
+    let mut out = Vec::with_capacity(input.len() / 2);
+    let mut i = 0usize;
+    let mut lit_start = 0usize;
+    let mut lit_len = 0usize;
+
+    while i < input.len() {
+        let run_len = count_run_capped(input, i, MAX_EXT_LEN + MIN_RUN);
+
+        if run_len >= MIN_RUN {
+            if lit_len > 0 {
+                flush_literals_ext(&mut out, input, lit_start, lit_len);
+                lit_len = 0;
+            }
+            emit_run_ext(&mut out, input[i], run_len);
+            i += run_len;
+            continue;
+        }
+
+        if lit_len == 0 {
+            lit_start = i;
+        }
+        lit_len += 1;
+        i += 1;
+
+        if lit_len == MAX_EXT_LEN {
+            flush_literals_ext(&mut out, input, lit_start, lit_len);
+            lit_len = 0;
+        }
+    }
+
+    if lit_len > 0 {
+        flush_literals_ext(&mut out, input, lit_start, lit_len);
+    }
+
+    out
+}
+
+fn emit_run_ext(out: &mut Vec<u8>, byte: u8, run_len: usize) {
+    if run_len <= MAX_SHORT_RUN_EXT {
+        out.push(0x80 | ((run_len - MIN_RUN) as u8));
+        out.push(byte);
+    } else {
+        let ext = (run_len - MIN_RUN) as u16;
+        out.push(EXT_RUN_TAG);
+        out.push((ext & 0xFF) as u8);
+        out.push((ext >> 8) as u8);
+        out.push(byte);
+    }
+}
+
+fn flush_literals_ext(out: &mut Vec<u8>, input: &[u8], mut start: usize, mut len: usize) {
+    while len > 0 {
+        if len <= MAX_SHORT_LITERAL_EXT {
+            out.push((len - 1) as u8);
+            out.extend_from_slice(&input[start..start + len]);
+            return;
+        }
+        let chunk = len.min(MAX_EXT_LEN);
+        out.push(EXT_LITERAL_TAG);
+        out.push((chunk & 0xFF) as u8);
+        out.push((chunk >> 8) as u8);
+        out.extend_from_slice(&input[start..start + chunk]);
+        start += chunk;
+        len -= chunk;
+    }
+}
+
+pub fn decompress_ext(input: &[u8], expected_size: u64) -> Result<Vec<u8>> {
+    let expected_size = usize::try_from(expected_size)
+        .map_err(|_| DolinError::Format("expected size does not fit usize".into()))?;
+
+    if expected_size == 0 {
+        if input.is_empty() {
+            return Ok(Vec::new());
+        }
+        return Err(DolinError::Format(
+            "non-empty DON-RLE stream for empty output".into(),
+        ));
+    }
+
+    let mut out = Vec::with_capacity(expected_size);
+    let mut i = 0usize;
+
+    while i < input.len() && out.len() < expected_size {
+        let tag = input[i];
+        i += 1;
+
+        match tag {
+            EXT_LITERAL_TAG => {
+                if i + 2 > input.len() {
+                    return Err(DolinError::Format("truncated ext literal header".into()));
+                }
+                let len = u16::from_le_bytes([input[i], input[i + 1]]) as usize;
+                i += 2;
+                if i + len > input.len() {
+                    return Err(DolinError::Format("truncated ext literal".into()));
+                }
+                if out.len() + len > expected_size {
+                    return Err(DolinError::Format("ext literal exceeds expected".into()));
+                }
+                out.extend_from_slice(&input[i..i + len]);
+                i += len;
+            }
+            EXT_RUN_TAG => {
+                if i + 3 > input.len() {
+                    return Err(DolinError::Format("truncated ext run".into()));
+                }
+                let len_ext = u16::from_le_bytes([input[i], input[i + 1]]) as usize;
+                let len = len_ext + MIN_RUN;
+                let value = input[i + 2];
+                i += 3;
+                if out.len() + len > expected_size {
+                    return Err(DolinError::Format("ext run exceeds expected".into()));
+                }
+                out.resize(out.len() + len, value);
+            }
+            t if t < 0x80 => {
+                let len = (t as usize) + 1;
+                if i + len > input.len() {
+                    return Err(DolinError::Format("truncated literal".into()));
+                }
+                if out.len() + len > expected_size {
+                    return Err(DolinError::Format("literal exceeds expected".into()));
+                }
+                out.extend_from_slice(&input[i..i + len]);
+                i += len;
+            }
+            t => {
+                let len = ((t & 0x7F) as usize) + MIN_RUN;
+                if i >= input.len() {
+                    return Err(DolinError::Format("truncated run".into()));
+                }
+                let value = input[i];
+                i += 1;
+                if out.len() + len > expected_size {
+                    return Err(DolinError::Format("run exceeds expected".into()));
+                }
+                out.resize(out.len() + len, value);
+            }
+        }
+    }
+
+    if out.len() != expected_size {
+        return Err(DolinError::Format("output shorter than expected".into()));
+    }
+    if i != input.len() {
+        return Err(DolinError::Format("trailing bytes".into()));
+    }
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

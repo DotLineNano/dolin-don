@@ -25,6 +25,7 @@ pub enum PackMethod {
     Lz,
     LzV5,
     LzV5Huff,
+    RleExt,
 }
 
 impl PackMethod {
@@ -36,6 +37,7 @@ impl PackMethod {
             "lz" => Some(Self::Lz),
             "lzv5" | "lz-v5" | "v5" => Some(Self::LzV5),
             "lzv5huff" | "lz-v5-huff" | "huff" => Some(Self::LzV5Huff),
+            "rleext" | "rle-ext" => Some(Self::RleExt),
             _ => None,
         }
     }
@@ -109,6 +111,27 @@ fn detect_file_type(data: &[u8], path: &str) -> &'static str {
     }
 
     "generic"
+}
+
+fn estimate_entropy(data: &[u8]) -> f32 {
+    if data.is_empty() {
+        return 0.0;
+    }
+    let sample_size = data.len().min(64 * 1024);
+    let sample = &data[..sample_size];
+    let mut freq = [0u64; 256];
+    for &b in sample {
+        freq[b as usize] += 1;
+    }
+    let len = sample.len() as f64;
+    let mut entropy = 0.0f64;
+    for &count in &freq {
+        if count > 0 {
+            let p = count as f64 / len;
+            entropy -= p * p.log2();
+        }
+    }
+    entropy as f32
 }
 
 pub fn pack_path_to_archive_with_method(
@@ -220,13 +243,13 @@ pub fn pack_path_to_archive_with_method(
     // Chunk data start setelah semua Stored payload (bukan dari data_offset)
     let mut chunk_data_start_offset = data_offset;
     for item in prepared.iter() {
-        if item.method == DonMethod::Stored || item.chunks.is_empty() {
+        if matches!(item.method, DonMethod::Stored | DonMethod::Rle | DonMethod::RleExt | DonMethod::Lz) || item.chunks.is_empty() {
             chunk_data_start_offset += item.payload.len() as u64;
         }
     }
 
     for item in prepared.iter() {
-        if item.chunks.is_empty() || item.method == DonMethod::Stored {
+        if item.chunks.is_empty() || matches!(item.method, DonMethod::Stored | DonMethod::Rle | DonMethod::RleExt | DonMethod::Lz) {
             continue;  // skip Stored (payload langsung, bukan chunk)
         }
         for chunk in &item.chunks {
@@ -256,7 +279,7 @@ pub fn pack_path_to_archive_with_method(
     // Untuk method=Stored, chunk_count=0 (payload langsung, bukan chunk)
     let mut chunk_idx = 0u64;
     for (idx, item) in prepared.iter().enumerate() {
-        if item.chunks.is_empty() || item.method == DonMethod::Stored {
+        if item.chunks.is_empty() || matches!(item.method, DonMethod::Stored | DonMethod::Rle | DonMethod::RleExt | DonMethod::Lz) {
             entries[idx].chunk_table_offset = 0;
             entries[idx].chunk_count = 0;
             continue;
@@ -285,7 +308,7 @@ pub fn pack_path_to_archive_with_method(
             }
             continue;
         }
-        if item.method == DonMethod::Stored || item.chunks.is_empty() {
+        if matches!(item.method, DonMethod::Stored | DonMethod::Rle | DonMethod::RleExt | DonMethod::Lz) || item.chunks.is_empty() {
             entries[idx].data_offset = current_offset;
             entries[idx].stored_size = item.payload.len() as u64;
             current_offset += entries[idx].stored_size;
@@ -299,7 +322,7 @@ pub fn pack_path_to_archive_with_method(
         if dedup_indices.contains(&idx) {
             continue;
         }
-        if item.method == DonMethod::Stored || item.chunks.is_empty() {
+        if matches!(item.method, DonMethod::Stored | DonMethod::Rle | DonMethod::RleExt | DonMethod::Lz) || item.chunks.is_empty() {
             continue;
         }
         // Chunk: data_offset = chunk_data_start_offset + cursor
@@ -345,7 +368,7 @@ pub fn pack_path_to_archive_with_method(
         }
         // Stored atau file kecil: payload langsung
         // Chunk: payload sudah di chunk_data
-        if item.method == DonMethod::Stored || item.chunks.is_empty() {
+        if matches!(item.method, DonMethod::Stored | DonMethod::Rle | DonMethod::RleExt | DonMethod::Lz) || item.chunks.is_empty() {
             writer.write_all(&item.payload)?;
         }
     }
@@ -465,6 +488,7 @@ fn prepare_entries(
                 PackMethod::Lz => (don_lz::compress(&original), DonMethod::Lz),
                 PackMethod::LzV5 => (don_lz::compress_lz_v5(&original), DonMethod::LzV5),
                 PackMethod::LzV5Huff => (don_lz::compress_lz_v5_huff(&original), DonMethod::LzV5Huff),
+                PackMethod::RleExt => (don_rle::compress_ext(&original), DonMethod::RleExt),
                 PackMethod::Auto => {
                     // File sangat kecil (< 32 byte) → Store
                     if original.len() < 32 {
@@ -473,24 +497,48 @@ fn prepare_entries(
                         // Deteksi tipe file: magic number + ekstensi
                         let file_type = detect_file_type(&original, &item.rel_path);
                         match file_type {
-                            "precompressed" => (original.clone(), DonMethod::Stored),
-                            "binary_img" => {
-                                let rle = don_rle::compress(&original);
-                                let lzv5 = don_lz::compress_lz_v5_typed(&original, "img");
-                                if rle.len() < lzv5.len() {
-                                    (rle, DonMethod::Rle)
+                            "precompressed" => {
+                                if original.len() > 1024 * 1024 {
+                                    let rle_ext = don_rle::compress_ext(&original);
+                                    if rle_ext.len() < original.len() * 99 / 100 {
+                                        (rle_ext, DonMethod::RleExt)
+                                    } else {
+                                        (original.clone(), DonMethod::Stored)
+                                    }
                                 } else {
-                                    (lzv5, DonMethod::LzV5)
+                                    (original.clone(), DonMethod::Stored)
+                                }
+                            }
+                            "binary_img" => {
+                                let rle_ext = don_rle::compress_ext(&original);
+                                if rle_ext.len() < original.len() * 70 / 100 {
+                                    (rle_ext, DonMethod::RleExt)
+                                } else if original.len() < 4096 {
+                                    (original.clone(), DonMethod::Stored)
+                                } else if original.len() > 5 * 1024 * 1024
+                                    && estimate_entropy(&original) > 7.95
+                                {
+                                    (original.clone(), DonMethod::Stored)
+                                } else {
+                                    let lzv5 = don_lz::compress_lz_v5_typed(&original, "img");
+                                    if lzv5.is_empty() || lzv5.len() >= original.len() {
+                                        (original.clone(), DonMethod::Stored)
+                                    } else {
+                                        (lzv5, DonMethod::LzV5)
+                                    }
                                 }
                             }
                             "elf" => (don_lz::compress_lz_v5_typed(&original, "elf"), DonMethod::LzV5),
                             "text" => {
-                                let lzv5 = don_lz::compress_lz_v5_typed(&original, "text");
-                                let huff = don_lz::compress_lz_v5_huff(&original);
-                                if huff.len() < lzv5.len() {
-                                    (huff, DonMethod::LzV5Huff)
+                                if original.len() < 4096 {
+                                    let rle = don_rle::compress(&original);
+                                    if rle.len() < original.len() {
+                                        (rle, DonMethod::Rle)
+                                    } else {
+                                        (original.clone(), DonMethod::Stored)
+                                    }
                                 } else {
-                                    (lzv5, DonMethod::LzV5)
+                                    (don_lz::compress_lz_v5_typed(&original, "text"), DonMethod::LzV5)
                                 }
                             }
                             _ => (don_lz::compress_lz_v5_typed(&original, "generic"), DonMethod::LzV5),
@@ -511,10 +559,12 @@ fn prepare_entries(
             entry.dedup_hash = item.crc32 as u64;
 
             // v3: chunk hash per file (4KB)
-            let chunks = if payload.len() >= 4096 {
+            let chunks = if payload.len() >= 4096
+                && matches!(method, DonMethod::Lz | DonMethod::LzV5 | DonMethod::LzV5Huff)
+            {
                 crate::chunk::chunk_and_hash(&payload, 4096)
             } else {
-                Vec::new()  // file < 4KB, tidak perlu chunk
+                Vec::new()
             };
 
             Ok(PreparedEntry {
