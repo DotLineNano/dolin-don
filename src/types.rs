@@ -14,7 +14,8 @@ pub const DON_METHOD_RLE: u16 = 1;
 pub const DON_METHOD_LZ: u16 = 2;
 pub const DON_METHOD_LZ_V5: u16 = 3;
 pub const DON_METHOD_LZ_V5_HUFF: u16 = 5;
-pub const DON_METHOD_RLE_EXT: u16 = 6;  // Extended RLE (run/literal up to 64KB)
+pub const DON_METHOD_RLE_EXT: u16 = 6;
+pub const DON_METHOD_DEFLATE: u16 = 7;  // DEFLATE (miniz_oxide)  // Extended RLE (run/literal up to 64KB)
 
 pub const DON_ENTRY_FLAG_FILE: u16 = 0x0001;
 pub const DON_ENTRY_FLAG_DEDUP: u16 = 0x0002;
@@ -27,6 +28,7 @@ pub enum DonMethod {
     LzV5,
     LzV5Huff,
     RleExt,
+    Deflate,
 }
 
 impl DonMethod {
@@ -38,6 +40,7 @@ impl DonMethod {
             DonMethod::LzV5 => DON_METHOD_LZ_V5,
             DonMethod::LzV5Huff => DON_METHOD_LZ_V5_HUFF,
             DonMethod::RleExt => DON_METHOD_RLE_EXT,
+            DonMethod::Deflate => DON_METHOD_DEFLATE,
         }
     }
 
@@ -49,6 +52,7 @@ impl DonMethod {
             DON_METHOD_LZ_V5 => Some(DonMethod::LzV5),
             DON_METHOD_LZ_V5_HUFF => Some(DonMethod::LzV5Huff),
             DON_METHOD_RLE_EXT => Some(DonMethod::RleExt),
+            DON_METHOD_DEFLATE => Some(DonMethod::Deflate),
             _ => None,
         }
     }

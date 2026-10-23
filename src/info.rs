@@ -10,7 +10,8 @@ pub struct ArchiveInfo {
     pub stored_size: u64,
     pub original_size: u64,
     pub store_count: usize,
-    pub rle_count: usize,
+    pub deflate_count: u64,
+    rle_count: usize,
     pub lz_count: usize,
 }
 
@@ -47,6 +48,7 @@ pub fn archive_info(path: &Path) -> Result<ArchiveInfo> {
             DonMethod::LzV5 => info.lz_count += 1,
             DonMethod::LzV5Huff => info.lz_count += 1,
             DonMethod::RleExt => info.rle_count += 1,
+            DonMethod::Deflate => info.deflate_count += 1,
         }
     }
 

@@ -110,6 +110,8 @@ pub fn validate_archive(path: &Path) -> Result<()> {
             Some(DonMethod::Lz) => don_lz::decompress(&stored, raw.original_size)?,
             Some(DonMethod::LzV5) => don_lz::decompress_lz_v5(&stored, raw.original_size)?,
             Some(DonMethod::LzV5Huff) => don_lz::decompress_lz_v5_huff(&stored, raw.original_size)?,
+            Some(DonMethod::Deflate) => miniz_oxide::inflate::decompress_to_vec(&stored)
+                .map_err(|e| DolinError::Format(format!("deflate: {:?}", e)))?,
             None => return Err(DolinError::InvalidFormat("entry uses unsupported method")),
         };
 

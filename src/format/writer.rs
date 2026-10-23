@@ -26,6 +26,7 @@ pub enum PackMethod {
     LzV5,
     LzV5Huff,
     RleExt,
+    Deflate,
 }
 
 impl PackMethod {
@@ -38,6 +39,7 @@ impl PackMethod {
             "lzv5" | "lz-v5" | "v5" => Some(Self::LzV5),
             "lzv5huff" | "lz-v5-huff" | "huff" => Some(Self::LzV5Huff),
             "rleext" | "rle-ext" => Some(Self::RleExt),
+            "deflate" | "df" => Some(Self::Deflate),
             _ => None,
         }
     }
@@ -243,13 +245,13 @@ pub fn pack_path_to_archive_with_method(
     // Chunk data start setelah semua Stored payload (bukan dari data_offset)
     let mut chunk_data_start_offset = data_offset;
     for item in prepared.iter() {
-        if matches!(item.method, DonMethod::Stored | DonMethod::Rle | DonMethod::RleExt | DonMethod::Lz) || item.chunks.is_empty() {
+        if matches!(item.method, DonMethod::Stored | DonMethod::Rle | DonMethod::RleExt | DonMethod::Lz | DonMethod::Deflate) || item.chunks.is_empty() {
             chunk_data_start_offset += item.payload.len() as u64;
         }
     }
 
     for item in prepared.iter() {
-        if item.chunks.is_empty() || matches!(item.method, DonMethod::Stored | DonMethod::Rle | DonMethod::RleExt | DonMethod::Lz) {
+        if item.chunks.is_empty() || matches!(item.method, DonMethod::Stored | DonMethod::Rle | DonMethod::RleExt | DonMethod::Lz | DonMethod::Deflate) {
             continue;  // skip Stored (payload langsung, bukan chunk)
         }
         for chunk in &item.chunks {
@@ -279,7 +281,7 @@ pub fn pack_path_to_archive_with_method(
     // Untuk method=Stored, chunk_count=0 (payload langsung, bukan chunk)
     let mut chunk_idx = 0u64;
     for (idx, item) in prepared.iter().enumerate() {
-        if item.chunks.is_empty() || matches!(item.method, DonMethod::Stored | DonMethod::Rle | DonMethod::RleExt | DonMethod::Lz) {
+        if item.chunks.is_empty() || matches!(item.method, DonMethod::Stored | DonMethod::Rle | DonMethod::RleExt | DonMethod::Lz | DonMethod::Deflate) {
             entries[idx].chunk_table_offset = 0;
             entries[idx].chunk_count = 0;
             continue;
@@ -308,7 +310,7 @@ pub fn pack_path_to_archive_with_method(
             }
             continue;
         }
-        if matches!(item.method, DonMethod::Stored | DonMethod::Rle | DonMethod::RleExt | DonMethod::Lz) || item.chunks.is_empty() {
+        if matches!(item.method, DonMethod::Stored | DonMethod::Rle | DonMethod::RleExt | DonMethod::Lz | DonMethod::Deflate) || item.chunks.is_empty() {
             entries[idx].data_offset = current_offset;
             entries[idx].stored_size = item.payload.len() as u64;
             current_offset += entries[idx].stored_size;
@@ -322,7 +324,7 @@ pub fn pack_path_to_archive_with_method(
         if dedup_indices.contains(&idx) {
             continue;
         }
-        if matches!(item.method, DonMethod::Stored | DonMethod::Rle | DonMethod::RleExt | DonMethod::Lz) || item.chunks.is_empty() {
+        if matches!(item.method, DonMethod::Stored | DonMethod::Rle | DonMethod::RleExt | DonMethod::Lz | DonMethod::Deflate) || item.chunks.is_empty() {
             continue;
         }
         // Chunk: data_offset = chunk_data_start_offset + cursor
@@ -368,7 +370,7 @@ pub fn pack_path_to_archive_with_method(
         }
         // Stored atau file kecil: payload langsung
         // Chunk: payload sudah di chunk_data
-        if matches!(item.method, DonMethod::Stored | DonMethod::Rle | DonMethod::RleExt | DonMethod::Lz) || item.chunks.is_empty() {
+        if matches!(item.method, DonMethod::Stored | DonMethod::Rle | DonMethod::RleExt | DonMethod::Lz | DonMethod::Deflate) || item.chunks.is_empty() {
             writer.write_all(&item.payload)?;
         }
     }
@@ -489,6 +491,14 @@ fn prepare_entries(
                 PackMethod::LzV5 => (don_lz::compress_lz_v5(&original), DonMethod::LzV5),
                 PackMethod::LzV5Huff => (don_lz::compress_lz_v5_huff(&original), DonMethod::LzV5Huff),
                 PackMethod::RleExt => (don_rle::compress_ext(&original), DonMethod::RleExt),
+                PackMethod::Deflate => {
+                    let level = std::env::var("DOLIN_DEFLATE_LEVEL")
+                        .ok()
+                        .and_then(|s| s.parse::<u8>().ok())
+                        .unwrap_or(6);
+                    eprintln!("[DEBUG] deflate level = {}", level);
+                    (miniz_oxide::deflate::compress_to_vec(&original, level), DonMethod::Deflate)
+                },
                 PackMethod::Auto => {
                     // File sangat kecil (< 32 byte) → Store
                     if original.len() < 32 {
@@ -498,25 +508,32 @@ fn prepare_entries(
                         let file_type = detect_file_type(&original, &item.rel_path);
                         match file_type {
                             "precompressed" => {
-                                if original.len() > 1024 * 1024 {
-                                    let rle_ext = don_rle::compress_ext(&original);
-                                    if rle_ext.len() < original.len() * 99 / 100 {
-                                        (rle_ext, DonMethod::RleExt)
+                                let is_zip_container = original.starts_with(b"PK\x03\x04");
+                                
+                                // File kecil (<4KB): overhead deflate tidak worth it
+                                if original.len() < 4096 {
+                                    (original.clone(), DonMethod::Stored)
+                                } else if is_zip_container {
+                                    // ZIP container: langsung deflate L1 (377ms for 25MB, worth it)
+                                    let deflated = miniz_oxide::deflate::compress_to_vec(&original, 1);
+                                    if deflated.len() < original.len() {
+                                        (deflated, DonMethod::Deflate)
                                     } else {
                                         (original.clone(), DonMethod::Stored)
                                     }
                                 } else {
+                                    // Single-stream (MP4/JPEG): store
                                     (original.clone(), DonMethod::Stored)
                                 }
-                            }
+                            },
                             "binary_img" => {
                                 let rle_ext = don_rle::compress_ext(&original);
                                 if rle_ext.len() < original.len() * 70 / 100 {
                                     (rle_ext, DonMethod::RleExt)
                                 } else if original.len() < 4096 {
                                     (original.clone(), DonMethod::Stored)
-                                } else if original.len() > 5 * 1024 * 1024
-                                    && estimate_entropy(&original) > 7.95
+                                } else if original.len() > 4096
+                                    && estimate_entropy(&original[..original.len().min(64 * 1024)]) > 7.5
                                 {
                                     (original.clone(), DonMethod::Stored)
                                 } else {
@@ -541,7 +558,33 @@ fn prepare_entries(
                                     (don_lz::compress_lz_v5_typed(&original, "text"), DonMethod::LzV5)
                                 }
                             }
-                            _ => (don_lz::compress_lz_v5_typed(&original, "generic"), DonMethod::LzV5),
+                            _ => {
+                                // Fast entropy check: skip compression on random data
+                                let sample_size = original.len().min(64 * 1024);
+                                let sample = &original[..sample_size];
+                                let entropy = estimate_entropy(sample);
+
+                                if entropy > 7.5 {
+                                    // High entropy = incompressible (random, encrypted)
+                                    (original.clone(), DonMethod::Stored)
+                                } else if original.len() < 4096 {
+                                    // Small file: RLE or store (skip deflate header overhead)
+                                    let rle = don_rle::compress(&original);
+                                    if rle.len() < original.len() {
+                                        (rle, DonMethod::Rle)
+                                    } else {
+                                        (original.clone(), DonMethod::Stored)
+                                    }
+                                } else {
+                                    // Worth trying: deflate L1 (fast + good)
+                                    let deflated = miniz_oxide::deflate::compress_to_vec(&original, 1);
+                                    if deflated.len() < original.len() {
+                                        (deflated, DonMethod::Deflate)
+                                    } else {
+                                        (original.clone(), DonMethod::Stored)
+                                    }
+                                }
+                            }
                         }
                     }
                 }
