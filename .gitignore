@@ -118,3 +118,6 @@ test_*
 
 # Build artifacts
 target/
+
+# Android app (private, not part of public tool)
+/app/
