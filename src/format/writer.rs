@@ -152,11 +152,22 @@ pub fn pack_path_to_archive_with_method(
     let prepared = prepare_entries(&collected, pack_method)?;
     let mut entries: Vec<DonEntry> = prepared.iter().map(|item| item.entry.clone()).collect();
 
+    // Set stored_size + original_size + crc32 + method + mtime dari prepared
+    // (lakukan SEBELUM assign data_offset, karena dedup butuh stored_size)
+    for (entry, prepared_item) in entries.iter_mut().zip(prepared.iter()) {
+        entry.stored_size = prepared_item.payload.len() as u64;
+        entry.original_size = prepared_item.original_size;
+        entry.crc32 = prepared_item.crc32;
+        entry.method = prepared_item.method;
+        entry.mtime_unix = prepared_item.mtime_unix;
+    }
+
+
     // ═══════════════════════════════════════════════════════
     // DEDUP: deteksi file duplikat (crc32 sama)
     // ═══════════════════════════════════════════════════════
     // Map: crc32 → index entry pertama
-    let mut dedup_map: HashMap<u32, usize> = HashMap::new();
+    let mut dedup_map: HashMap<(u32, u64), usize> = HashMap::new();
     // Set: index yang dedup (skip payload write)
     let mut dedup_indices: Vec<usize> = Vec::new();
     
@@ -168,14 +179,15 @@ pub fn pack_path_to_archive_with_method(
             continue;
         }
         
-        if let Some(&first_idx) = dedup_map.get(&crc) {
+        let key = (crc, entry.original_size);
+        if let Some(&first_idx) = dedup_map.get(&key) {
             // Duplikat: tandai DEDUP, data_offset akan di-set ke first_idx nanti
             entry.flags |= DON_ENTRY_FLAG_DEDUP;
             entry.dedup_source = Some(first_idx);
             dedup_indices.push(idx);
         } else {
             // Pertama: simpan di map
-            dedup_map.insert(crc, idx);
+            dedup_map.insert(key, idx);
         }
     }
 
@@ -196,16 +208,6 @@ pub fn pack_path_to_archive_with_method(
     let data_offset = path_table_offset
         .checked_add(path_table_size)
         .ok_or(DolinError::InvalidFormat("data offset overflow"))?;
-
-    // Set stored_size + original_size + crc32 + method + mtime dari prepared
-    // (lakukan SEBELUM assign data_offset, karena dedup butuh stored_size)
-    for (entry, prepared_item) in entries.iter_mut().zip(prepared.iter()) {
-        entry.stored_size = prepared_item.payload.len() as u64;
-        entry.original_size = prepared_item.original_size;
-        entry.crc32 = prepared_item.crc32;
-        entry.method = prepared_item.method;
-        entry.mtime_unix = prepared_item.mtime_unix;
-    }
 
     // Clone data_offset + stored_size untuk dedup (hindari borrow checker)
     // Index → (data_offset, stored_size)
