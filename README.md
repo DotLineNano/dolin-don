@@ -22,6 +22,24 @@ what fits best.
 
 ---
 
+## What works well
+
+- **Deduplication** — identical files are stored once. This is the main
+  feature and it works reliably.
+- **Atomic extract** — failed extraction never corrupts existing data.
+- **Zip-slip safe** — sanitized paths, no path traversal.
+
+---
+
+## What's being worked on
+
+- **Speed** — current performance is decent, but we're optimizing
+  the hot paths.
+- **Compression ratio** — competitive with zip on most inputs, but
+  zstd still wins on raw compression. Tuning in progress.
+
+---
+
 ## Install
 
 Requires Rust 1.70+. No C compiler.
@@ -129,6 +147,20 @@ Not stored (yet): permissions, owner, symlinks, xattr.
   points to first
 - **Chunk-level (v3)** — files over 4 KB split into 4 KB chunks. Identical
   chunks across files stored once. Only for `lzv5`/`lzv5huff`.
+
+### Dedup in practice
+
+Backing up **5 identical 25 MB APKs**:
+
+| Tool | Size | Ratio |
+|------|------|-------|
+| tar.zst -3 | 116.7 MB | -11.56% |
+| tar.gz -6 | 118.9 MB | -9.90% |
+| zip -6 | 118.9 MB | -9.90% |
+| **dolin** | **23.3 MB** | **-81.87%** |
+
+Dolin stores one payload and four pointers. `zip`, `tar`, and `zstd`
+cannot do this — they store every file independently.
 
 ---
 
