@@ -34,33 +34,38 @@ cargo build --release
 
 Binary at `target/release/dolin`.
 
+Prebuilt binaries for Linux (x86_64, ARM64), macOS (Intel, Apple Silicon),
+and Windows are available in [Releases](https://github.com/DotLineNano/dolin-don/releases/latest).
+
 ---
 
 ## Basic usage
 
 ```bash
-dolin pack ./my-photos photos.don      # pack a folder
-dolin info photos.don                   # summary
-dolin list photos.don                   # list entries
-dolin extract photos.don ./restored     # extract
-dolin validate photos.don               # verify CRC32
+dolin pack ./my-photos photos.don            # pack a folder
+dolin info photos.don                        # summary
+dolin list photos.don                        # list entries
+dolin extract photos.don ./restored          # dir must be empty
+dolin extract --force photos.don ./restored  # replace non-empty dir
+dolin extract --merge photos.don ./restored  # merge into existing dir
+dolin validate photos.don                    # verify CRC32
 ```
 
-Three commands you will use 99% of the time: `pack`, `extract`, `list`.
+In practice, most work is just `pack` and `extract`.
 
 ---
 
 ## All commands
 
 ```
-dolin pack <input> <output.don>          Pack file or folder
-dolin info <archive.don>                 Show summary
-dolin list [--raw] [--summary] <a.don>   List entries
-dolin extract <a.don> <dir>              Extract all
-dolin extract-one <a.don> <path> <out>   Extract one file
-dolin validate [--quiet] <a.don>         Verify integrity
-dolin bench <file_or_dir>                Benchmark methods
-dolin help                               Show help
+dolin pack [--method <m>] <input> <out.don>     Pack (auto|store|rle|rleext|lz|lzv5|deflate)
+dolin info <archive.don>                        Show summary
+dolin list [--raw] [--summary] <a.don>          List entries
+dolin extract [--force|--merge] <a.don> <dir>   Extract (default: refuse non-empty)
+dolin extract-one <a.don> <path> <out>          Extract one file
+dolin validate [--quiet] <a.don>                Verify integrity
+dolin bench <file_or_dir>                       Benchmark methods
+dolin help                                      Show help
 ```
 
 ---
@@ -74,6 +79,7 @@ keeps the smallest result.
 | Method | When picked | Example |
 |--------|-------------|---------|
 | `stored` | Already compressed, tiny, or random | APK, PNG |
+| `deflate` | ZIP containers (APK/ZIP/JAR) | Android apps |
 | `rle` | Short runs | Small bitmaps |
 | `rleext` | Long runs (up to 64 KB) | Boot images, zero padding |
 | `lzv5` | Text, code, binaries | Logs, ELF |
@@ -91,13 +97,13 @@ Mixed folder (117 files, 90 MB total), ARM64 Termux, 8 cores, release build:
 
 A 64 MB boot image packs to **19.99 MB in 0.29 seconds** with `rleext`.
 
-*Your results will vary with hardware and file mix.*
+*Numbers from an 8-core ARM64 phone. Yours will differ.*
 
 ---
 
 ## Format
 
-Everything is in one file. No sidecar index.
+Single file. No separate index to lose.
 
 ```
 +------------------------+
@@ -151,7 +157,6 @@ fn main() -> dolin::Result<()> {
 - **Extract is sequential.** Parallel extract planned.
 - **`lzv5huff` not always better than `lzv5`.** Auto picks it only if 2%+
   saving.
-- **Format v3 stable.** Current release is v2.0. Breaking changes possible before 3.0.
 
 ---
 
@@ -224,5 +229,3 @@ Forks welcome with attribution.
 - License: [BSD-3-Clause](LICENSE)
 
 ---
-
-*Dolin — built with Rust, no C dependencies.*
