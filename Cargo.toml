@@ -1,6 +1,6 @@
 [package]
 name = "dolin"
-version = "2.0.0"
+version = "2.0.1"
 edition = "2021"
 license = "BSD-3-Clause"
 description = "Dolin archive format (.don) in Rust"
