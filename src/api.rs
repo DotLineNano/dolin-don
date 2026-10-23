@@ -30,7 +30,11 @@ pub struct DonArchive {
 impl DonArchive {
     pub fn open(path: &Path) -> Result<Self> {
         let entries = reader::read_archive_entries(path)?;
-        let total_stored_size = entries.iter().map(|e| e.stored_size).sum();
+        let mut seen_payloads: std::collections::HashSet<(u32, u64)> = std::collections::HashSet::new();
+        let total_stored_size: u64 = entries.iter()
+            .filter(|e| seen_payloads.insert((e.crc32, e.original_size)))
+            .map(|e| e.stored_size)
+            .sum();
         let total_original_size = entries.iter().map(|e| e.original_size).sum();
 
         let info = DonArchiveInfo {
