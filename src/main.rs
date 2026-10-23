@@ -18,7 +18,7 @@ USAGE:
 dolin pack <input_path> <output.don>
 dolin info <archive.don>
 dolin list [--raw] [--summary] <archive.don>
-dolin extract <archive.don> <output_dir>
+dolin extract [--force|--merge] <archive.don> <output_dir>
 dolin extract-one <archive.don> <entry_path> <output_file>
 dolin validate [--quiet] <archive.don>
 dolin bench <file_or_dir>
@@ -28,13 +28,15 @@ COMMANDS:
 pack         Create a .don archive from a file or directory
 info         Show archive summary
 list         List archive entries
-extract      Extract all entries into a directory
+extract      Extract all entries (default: refuse non-empty dir)
 extract-one  Extract one entry into a file
 validate     Verify archive structure and CRC32 integrity
 bench        Compare raw/RLE/LZ sizes on a file or directory
 help         Show this help message
 
 OPTIONS:
+  --force      [extract] Replace non-empty output directory
+  --merge      [extract] Merge into existing directory (tar/unzip style)
   --raw        Use machine-friendly output for 'list'
   --summary    Show archive totals after 'list'
   --quiet      Suppress success output for 'validate'
@@ -52,11 +54,57 @@ fn run() -> dolin::Result<()> {
 
     match command.as_str() {
         "pack" => {
-            let input = require_arg(&mut args, "pack <input_path> <output.don>")?;
-            let output = require_arg(&mut args, "pack <input_path> <output.don>")?;
+            // Parse optional --method flag first, then positional args
+            let mut method_str: Option<String> = None;
+            let mut positional: Vec<String> = Vec::new();
 
-            dolin::pack_path_to_archive(Path::new(&input), Path::new(&output))?;
-            let info = dolin::get_archive_info(Path::new(&output))?;
+            while positional.len() < 2 {
+                let arg = match args.next() {
+                    Some(a) => a,
+                    None => break,
+                };
+                match arg.as_str() {
+                    "--method" => {
+                        method_str = args.next();
+                        if method_str.is_none() {
+                            eprintln!("error: --method requires a value");
+                            std::process::exit(1);
+                        }
+                    }
+                    _ if arg.starts_with("--method=") => {
+                        method_str = Some(arg.trim_start_matches("--method=").to_string());
+                    }
+                    _ => positional.push(arg),
+                }
+            }
+
+            if positional.len() < 2 {
+                eprintln!("error: missing arguments");
+                eprintln!("usage: dolin pack [--method <name>] <input_path> <output.don>");
+                std::process::exit(1);
+            }
+
+            let input = &positional[0];
+            let output = &positional[1];
+
+            let method = match method_str.as_deref() {
+                Some(s) => match dolin::PackMethod::parse(s) {
+                    Some(m) => m,
+                    None => {
+                        eprintln!("error: unknown method: {}", s);
+                        eprintln!("valid: auto|store|rle|rleext|lz|lzv5|deflate");
+                        std::process::exit(1);
+                    }
+                },
+                None => dolin::PackMethod::Auto,
+            };
+
+            dolin::pack_path_to_archive_with_method(
+                Path::new(input),
+                Path::new(output),
+                method,
+            )?;
+            let info = dolin::get_archive_info(Path::new(output))?;
 
             println!("packed:   {} -> {}", input, output);
             println!("entries:  {}", info.entry_count);
@@ -219,11 +267,39 @@ fn run() -> dolin::Result<()> {
             }
         }
         "extract" => {
-            let archive = require_arg(&mut args, "extract <archive.don> <output_dir>")?;
-            let output_dir = require_arg(&mut args, "extract <archive.don> <output_dir>")?;
+            let mut force = false;
+            let mut merge = false;
+            let mut positional: Vec<String> = Vec::new();
 
-            let entries = dolin::list_archive_entries(Path::new(&archive))?;
-            dolin::extract_archive_to_dir(Path::new(&archive), Path::new(&output_dir))?;
+            while positional.len() < 2 {
+                let arg = match args.next() {
+                    Some(a) => a,
+                    None => break,
+                };
+                match arg.as_str() {
+                    "--force" | "-f" => force = true,
+                    "--merge" | "-m" => merge = true,
+                    _ => positional.push(arg),
+                }
+            }
+
+            if force && merge {
+                eprintln!("error: --force and --merge are mutually exclusive");
+                std::process::exit(1);
+            }
+
+            if positional.len() < 2 {
+                eprintln!("error: missing arguments");
+                eprintln!("usage: dolin extract [--force|--merge] <archive.don> <output_dir>");
+                std::process::exit(1);
+            }
+
+            let archive = &positional[0];
+            let output_dir = &positional[1];
+
+            let entries = dolin::list_archive_entries(Path::new(archive))?;
+            let opts = dolin::ExtractOptions { overwrite: force, merge };
+            dolin::extract_archive_to_dir_with(Path::new(archive), Path::new(output_dir), opts)?;
 
             println!("extracted: {} -> {}", archive, output_dir);
             println!("entries:   {}", entries.len());
@@ -313,6 +389,7 @@ fn method_name(method: u16) -> &'static str {
         4 => "lzv5ro",
         5 => "lzv5huff",
         6 => "rleext",
+        7 => "deflate",
         _ => "unknown",
     }
 }

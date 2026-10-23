@@ -20,10 +20,60 @@ pub fn read_archive_entries(archive_path: &Path) -> Result<Vec<DonEntryInfo>> {
     Ok(entries.into_iter().map(to_entry_info).collect())
 }
 
-pub fn extract_archive_to_dir(archive_path: &Path, output_dir: &Path) -> Result<()> {
-    let entries = read_archive(archive_path)?;
-    let staging_dir = temporary_output_dir(output_dir);
+/// Options for extract operations.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ExtractOptions {
+    /// Replace output dir even if non-empty (legacy behavior).
+    pub overwrite: bool,
+    /// Merge into existing dir instead of replacing (tar/unzip style).
+    pub merge: bool,
+}
 
+pub fn extract_archive_to_dir(archive_path: &Path, output_dir: &Path) -> Result<()> {
+    extract_archive_to_dir_with(archive_path, output_dir, ExtractOptions::default())
+}
+
+pub fn extract_archive_to_dir_with(
+    archive_path: &Path,
+    output_dir: &Path,
+    opts: ExtractOptions,
+) -> Result<()> {
+    let entries = read_archive(archive_path)?;
+
+    // Pre-check: output_dir must not be an existing non-directory file.
+    if output_dir.exists() && !output_dir.is_dir() {
+        return Err(DolinError::InvalidPath(format!(
+            "{}: exists but is not a directory",
+            output_dir.display()
+        )));
+    }
+
+    // MERGE mode: extract directly into existing dir, overwrite per-file.
+    if opts.merge {
+        fs::create_dir_all(output_dir)?;
+        let mut archive_file = File::open(archive_path)?;
+        for entry in entries {
+            let safe_rel = sanitize_relative_path(Path::new(&entry.path))?;
+            let out_path = output_dir.join(&safe_rel);
+            if let Some(parent) = out_path.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            let checked_out = ensure_within_base(output_dir, &out_path)?;
+            extract_entry_payload_atomic(&mut archive_file, &entry, &checked_out)?;
+        }
+        return Ok(());
+    }
+
+    // SAFE DEFAULT: refuse non-empty output unless --force given.
+    if output_dir.exists() && !opts.overwrite {
+        let has_content = fs::read_dir(output_dir)?.next().is_some();
+        if has_content {
+            return Err(DolinError::OutputNotEmpty(output_dir.to_path_buf()));
+        }
+    }
+
+    // ATOMIC mode (default or --force): extract to staging then swap.
+    let staging_dir = temporary_output_dir(output_dir);
     if staging_dir.exists() {
         fs::remove_dir_all(&staging_dir)?;
     }
@@ -31,19 +81,15 @@ pub fn extract_archive_to_dir(archive_path: &Path, output_dir: &Path) -> Result<
 
     let result = (|| -> Result<()> {
         let mut archive_file = File::open(archive_path)?;
-
         for entry in entries {
             let safe_rel = sanitize_relative_path(Path::new(&entry.path))?;
             let out_path = staging_dir.join(&safe_rel);
-
             if let Some(parent) = out_path.parent() {
                 fs::create_dir_all(parent)?;
             }
-
             let checked_out = ensure_within_base(&staging_dir, &out_path)?;
             extract_entry_payload_atomic(&mut archive_file, &entry, &checked_out)?;
         }
-
         Ok(())
     })();
 
@@ -55,7 +101,6 @@ pub fn extract_archive_to_dir(archive_path: &Path, output_dir: &Path) -> Result<
     if output_dir.exists() {
         fs::remove_dir_all(output_dir)?;
     }
-
     fs::rename(&staging_dir, output_dir)?;
     Ok(())
 }
@@ -299,6 +344,8 @@ fn decode_entry_payload(entry: &DonEntry, stored: &[u8]) -> Result<Vec<u8>> {
         DonMethod::Lz => don_lz::decompress(stored, entry.original_size),
         DonMethod::LzV5 => don_lz::decompress_lz_v5(stored, entry.original_size),
         DonMethod::LzV5Huff => don_lz::decompress_lz_v5_huff(stored, entry.original_size),
+        DonMethod::Deflate => miniz_oxide::inflate::decompress_to_vec(stored)
+            .map_err(|e| DolinError::Format(format!("deflate: {:?}", e))),
     }
 }
 

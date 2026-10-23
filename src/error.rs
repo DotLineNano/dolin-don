@@ -1,5 +1,6 @@
 use std::fmt;
 use std::io;
+use std::path::PathBuf;
 
 pub type Result<T> = std::result::Result<T, DolinError>;
 
@@ -11,6 +12,7 @@ pub enum DolinError {
     InvalidPath(String),
     EntryNotFound(String),
     Unsupported(&'static str),
+    OutputNotEmpty(PathBuf),
 }
 
 impl fmt::Display for DolinError {
@@ -22,6 +24,11 @@ impl fmt::Display for DolinError {
             DolinError::InvalidPath(path) => write!(f, "invalid path: {}", path),
             DolinError::EntryNotFound(path) => write!(f, "entry not found: {}", path),
             DolinError::Unsupported(msg) => write!(f, "unsupported: {}", msg),
+            DolinError::OutputNotEmpty(path) => write!(
+                f,
+                "output directory is not empty: {} (use --force to replace, --merge to merge)",
+                path.display()
+            ),
         }
     }
 }

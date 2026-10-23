@@ -12,10 +12,11 @@ mod info;
 pub use api::{DonArchiveInfo, DonEntryInfo};
 pub use error::{DolinError, Result};
 pub use format::reader::{
-    extract_archive_entry, extract_archive_to_dir, read_archive_entries as list_archive_entries,
+    extract_archive_entry, extract_archive_to_dir, extract_archive_to_dir_with,
+    ExtractOptions, read_archive_entries as list_archive_entries,
 };
 pub use format::validate::validate_archive;
-pub use format::writer::pack_path_to_archive;
+pub use format::writer::{pack_path_to_archive, pack_path_to_archive_with_method, PackMethod};
 
 pub fn bench_rle_size(data: &[u8]) -> usize {
     don_rle::compress(data).len()
