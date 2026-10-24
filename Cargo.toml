@@ -6,6 +6,7 @@ license = "BSD-3-Clause"
 description = "Dolin archive format (.don) in Rust"
 
 [lib]
+crate-type = ["cdylib", "rlib"]
 name = "dolin"
 path = "src/lib.rs"
 
